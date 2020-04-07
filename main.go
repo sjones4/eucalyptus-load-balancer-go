@@ -85,6 +85,9 @@ var (
 	_ = flag.Int("r", 1, "SWF domain retention period in days")
 	_ = flag.Int("t", 1, "Polling threads count (ignored)")
 
+	configurationTemplate = flag.String("T", "", "HAProxy configuration template path")
+	configurationOutput   = flag.String("O", "", "HAProxy configuration output path")
+
 	runDir = flag.String("R", "/var/run/load-balancer-servo", "Directory containing runtime files")
 	logDir = flag.String("L", "/var/log/load-balancer-servo", "Directory containing log files")
 )
@@ -196,12 +199,13 @@ func doActivity(activity string, parameter *string) (*string, error) {
 		}
 	}
 
-	handler, err := NewRedisHandler()
+	redisHandler, err := NewRedisHandler()
 	if err != nil {
 		logger.Printf("Error creating handler %s\n", err.Error())
 		return nil, err
 	}
-	defer handler.Close()
+	defer redisHandler.Close()
+	handler := configurationOutputEnhance(redisHandler)
 
 	err = handler.Send(ActivityChannels[activity], value)
 	if err != nil {
@@ -209,7 +213,7 @@ func doActivity(activity string, parameter *string) (*string, error) {
 		return nil, err
 	}
 	if parameter == nil {
-		result, _ := handler.Receive(ActivityChannels[activity])
+		result, err := handler.Receive(ActivityChannels[activity])
 		if err != nil {
 			logger.Printf("Error receiving from handler %s\n", err.Error())
 			return nil, err
@@ -231,6 +235,22 @@ func storeActivityValue(name string, value string) {
 			logger.Printf("Error writing value file %s\n", err.Error())
 		}
 	}
+}
+
+func configurationOutputEnhance(baseHandler ActivityHandler) (handler ActivityHandler) {
+	if *configurationTemplate != "" {
+		configPath := *configurationTemplate
+		outputPath := *configurationOutput
+		if outputPath == "" {
+			outputPath = fmt.Sprintf("%s/%s", *runDir, "loadbalancer-haproxy.conf")
+		}
+		handler = NewCompositeHandler(
+			baseHandler,
+			NewHaproxyConfigurationHandler(configPath, outputPath))
+	} else {
+		handler = baseHandler
+	}
+	return
 }
 
 // Handle cache for an activity value.
